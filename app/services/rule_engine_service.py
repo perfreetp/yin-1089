@@ -213,6 +213,85 @@ class RuleEngineService(BaseService[FollowUpRule, FollowUpRuleCreate, FollowUpRu
             "priority": max(rule.priority, clinical_priority or 0)
         }
 
+    async def trial_calculate(
+        self,
+        db: AsyncSession,
+        *,
+        patient_type: PatientType,
+        is_retest: bool = False,
+        hospital_id: Optional[int] = None,
+        last_contact_result: Optional[ContactResult] = None,
+        last_contact_time: Optional[datetime] = None
+    ) -> Dict[str, Any]:
+        rule = await self.get_applicable_rule(
+            db, patient_type=patient_type, is_retest=is_retest
+        )
+
+        interval_rule = await self.interval_rule_service.get_applicable_rule(
+            db, contact_result=last_contact_result, hospital_id=hospital_id
+        )
+
+        now = datetime.now()
+        can_contact = True
+        next_allowed_time = None
+        restriction_reason = None
+        trial_reason_parts = []
+
+        if rule:
+            trial_reason_parts.append(f"匹配随访规则: {rule.name}")
+        else:
+            trial_reason_parts.append("未匹配到随访规则，使用默认配置")
+
+        if interval_rule:
+            trial_reason_parts.append(f"匹配联系间隔规则: {interval_rule.name}")
+
+            if last_contact_time:
+                min_interval = timedelta(hours=interval_rule.min_interval_hours)
+                earliest_next = last_contact_time + min_interval
+                if earliest_next > now:
+                    can_contact = False
+                    next_allowed_time = earliest_next
+                    restriction_reason = f"距离上次联系不足{interval_rule.min_interval_hours}小时"
+                    trial_reason_parts.append(f"上次联系时间: {last_contact_time.strftime('%Y-%m-%d %H:%M')}，最早下次联系: {earliest_next.strftime('%Y-%m-%d %H:%M')}")
+
+            current_time_str = now.strftime("%H:%M")
+            if interval_rule.time_window_start and interval_rule.time_window_end:
+                if current_time_str < interval_rule.time_window_start or current_time_str > interval_rule.time_window_end:
+                    can_contact = False
+                    if not next_allowed_time:
+                        next_allowed_time = datetime.combine(
+                            now.date(),
+                            datetime.strptime(interval_rule.time_window_start, "%H:%M").time()
+                        )
+                        if now.time() > datetime.strptime(interval_rule.time_window_start, "%H:%M").time():
+                            next_allowed_time = next_allowed_time + timedelta(days=1)
+                    restriction_reason = f"不在允许的联系时段内 ({interval_rule.time_window_start}-{interval_rule.time_window_end})"
+                    trial_reason_parts.append(f"当前时间 {current_time_str} 不在联系时段 {interval_rule.time_window_start}-{interval_rule.time_window_end} 内")
+        else:
+            trial_reason_parts.append("未匹配到联系间隔规则，无间隔限制")
+
+        return {
+            "matched_rule": rule.name if rule else None,
+            "rule_id": rule.id if rule else None,
+            "follow_up_frequency_days": rule.follow_up_frequency_days if rule else 7,
+            "total_follow_up_count": rule.total_follow_up_count if rule else 3,
+            "max_attempts": rule.max_attempts if rule else 3,
+            "first_follow_up_hours": rule.first_follow_up_hours if rule else 24,
+            "overdue_hours": rule.overdue_hours if rule else 72,
+            "escalation_hours": rule.escalation_hours if rule else 120,
+            "matched_interval_rule": interval_rule.name if interval_rule else None,
+            "interval_rule_id": interval_rule.id if interval_rule else None,
+            "min_interval_hours": interval_rule.min_interval_hours if interval_rule else 0,
+            "max_daily_attempts": interval_rule.max_daily_attempts if interval_rule else 0,
+            "max_total_attempts": interval_rule.max_total_attempts if interval_rule else 0,
+            "time_window_start": interval_rule.time_window_start if interval_rule else None,
+            "time_window_end": interval_rule.time_window_end if interval_rule else None,
+            "can_contact_now": can_contact,
+            "next_allowed_time": next_allowed_time,
+            "contact_restriction_reason": restriction_reason,
+            "trial_reason": "; ".join(trial_reason_parts)
+        }
+
 
 class ContactIntervalRuleService(BaseService[ContactIntervalRule, ContactIntervalRuleCreate, ContactIntervalRuleUpdate]):
     def __init__(self):

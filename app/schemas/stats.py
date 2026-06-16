@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, date
 from decimal import Decimal
 
+from app.models.enums import PatientType
+
 
 class HospitalStatsResponse(BaseModel):
     hospital_id: int
@@ -129,3 +131,102 @@ class ExecutiveDashboardResponse(BaseModel):
     hospital_ranking_by_execution: List[Dict[str, Any]] = []
 
     last_updated: datetime
+
+
+class OverdueQueueDetail(BaseModel):
+    queue_id: int
+    queue_no: str
+    task_id: int
+    task_no: str
+    patient_id: int
+    patient_name: str
+    patient_type: str
+    hospital_id: int
+    hospital_name: str
+    assigned_staff_id: Optional[int] = None
+    assigned_staff_name: Optional[str] = None
+    follow_up_round: int
+    scheduled_time: Optional[datetime] = None
+    deadline: Optional[datetime] = None
+    status: str
+    attempt_count: int
+    overdue_hours: float = 0.0
+
+    class Config:
+        from_attributes = True
+
+
+class OverdueTaskDetail(BaseModel):
+    task_id: int
+    task_no: str
+    patient_id: int
+    patient_name: str
+    patient_type: str
+    hospital_id: int
+    hospital_name: str
+    is_retest: bool
+    deadline: Optional[datetime] = None
+    status: str
+    overdue_queues: int = 0
+    total_queues: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class OverdueBreakdownResponse(BaseModel):
+    dimension: str
+    dimension_value: str
+    overdue_count: int
+    total_count: int
+    overdue_rate: float = 0.0
+
+
+class OverdueDetailsResponse(BaseModel):
+    total: int = 0
+    items: List[OverdueQueueDetail] = []
+
+
+class BatchTransmitResponse(BaseModel):
+    total: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    skipped_count: int = 0
+    success_ids: List[int] = []
+    failed_ids: List[int] = []
+    skipped_ids: List[int] = []
+    failed_details: List[Dict[str, Any]] = []
+    skipped_details: List[Dict[str, Any]] = []
+
+
+class RuleTrialRequest(BaseModel):
+    patient_type: PatientType
+    is_retest: bool = False
+    hospital_id: Optional[int] = None
+    last_contact_result: Optional[Any] = None
+    last_contact_time: Optional[datetime] = None
+
+
+class RuleTrialResponse(BaseModel):
+    matched_rule: Optional[str] = None
+    rule_id: Optional[int] = None
+    follow_up_frequency_days: int = 7
+    total_follow_up_count: int = 3
+    max_attempts: int = 3
+    first_follow_up_hours: int = 24
+    overdue_hours: int = 72
+    escalation_hours: int = 120
+
+    matched_interval_rule: Optional[str] = None
+    interval_rule_id: Optional[int] = None
+    min_interval_hours: int = 0
+    max_daily_attempts: int = 0
+    max_total_attempts: int = 0
+    time_window_start: Optional[str] = None
+    time_window_end: Optional[str] = None
+
+    can_contact_now: bool = True
+    next_allowed_time: Optional[datetime] = None
+    contact_restriction_reason: Optional[str] = None
+
+    trial_reason: str = ""

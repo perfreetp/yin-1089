@@ -44,12 +44,6 @@ class StatsService:
                 func.sum(case((AssessmentTask.status == TaskStatus.PENDING, 1), else_=0)).label("pending"),
                 func.sum(case((AssessmentTask.status == TaskStatus.IN_PROGRESS, 1), else_=0)).label("in_progress"),
                 func.sum(case((AssessmentTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
-                func.sum(case((
-                    and_(
-                        AssessmentTask.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED]),
-                        AssessmentTask.deadline < now
-                    ), 1), else_=0
-                )).label("overdue"),
                 func.sum(case((AssessmentTask.status == TaskStatus.CANCELLED, 1), else_=0)).label("cancelled")
             ).filter(
                 AssessmentTask.hospital_id == hospital_id,
@@ -59,6 +53,16 @@ class StatsService:
             )
         )
         tasks_stats = tasks_result.first()
+
+        overdue_tasks_result = await db.execute(
+            select(func.count(func.distinct(FollowUpQueue.task_id))).filter(
+                FollowUpQueue.hospital_id == hospital_id,
+                FollowUpQueue.is_active == True,
+                FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+                FollowUpQueue.deadline < now
+            )
+        )
+        overdue_task_count = overdue_tasks_result.scalar_one() or 0
 
         queues_result = await db.execute(
             select(
@@ -126,7 +130,7 @@ class StatsService:
 
         total_tasks = tasks_stats.total or 0
         completed_tasks = tasks_stats.completed or 0
-        overdue_tasks = tasks_stats.overdue or 0
+        overdue_tasks = overdue_task_count
 
         completion_rate = (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0.0
         execution_rate = ((completed_tasks) / max(total_tasks - (tasks_stats.cancelled or 0), 1) * 100) if total_tasks > 0 else 0.0
@@ -424,24 +428,18 @@ class StatsService:
         pending_total = pending_result.scalar_one()
 
         overdue_result = await db.execute(
-            select(func.count(AssessmentTask.id)).filter(
-                AssessmentTask.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED]),
-                AssessmentTask.deadline < now,
-                AssessmentTask.is_active == True
+            select(func.count(func.distinct(FollowUpQueue.task_id))).filter(
+                FollowUpQueue.is_active == True,
+                FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+                FollowUpQueue.deadline < now
             )
         )
-        overdue_total = overdue_result.scalar_one()
+        overdue_total = overdue_result.scalar_one() or 0
 
         all_tasks_result = await db.execute(
             select(
                 func.count(AssessmentTask.id).label("total"),
-                func.sum(case((AssessmentTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
-                func.sum(case((
-                    and_(
-                        AssessmentTask.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED]),
-                        AssessmentTask.deadline < now
-                    ), 1), else_=0
-                )).label("overdue")
+                func.sum(case((AssessmentTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed")
             ).filter(AssessmentTask.is_active == True)
         )
         all_tasks = all_tasks_result.first()
@@ -516,7 +514,7 @@ class StatsService:
 
         avg_completion = (all_tasks.completed / all_tasks.total * 100) if all_tasks.total else 0
         avg_execution = avg_completion
-        avg_overdue = (all_tasks.overdue / all_tasks.total * 100) if all_tasks.total else 0
+        avg_overdue = (overdue_total / all_tasks.total * 100) if all_tasks.total else 0
 
         return ExecutiveDashboardResponse(
             total_hospitals=hospitals.total or 0,
@@ -620,3 +618,211 @@ class StatsService:
             retried_count += 1
 
         return retried_count
+
+    async def get_overdue_queues(
+        self,
+        db: AsyncSession,
+        *,
+        hospital_id: Optional[int] = None,
+        patient_type: Optional[PatientType] = None,
+        staff_id: Optional[int] = None,
+        skip: int = 0,
+        limit: int = 50
+    ) -> tuple[List[Dict[str, Any]], int]:
+        now = datetime.now()
+        from app.models import Patient, FollowUpStaff
+
+        query = select(FollowUpQueue).filter(
+            FollowUpQueue.is_active == True,
+            FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+            FollowUpQueue.deadline < now
+        )
+
+        if hospital_id:
+            query = query.filter(FollowUpQueue.hospital_id == hospital_id)
+        if staff_id:
+            query = query.filter(FollowUpQueue.assigned_staff_id == staff_id)
+        if patient_type:
+            query = query.filter(
+                FollowUpQueue.patient_id.in_(
+                    select(Patient.id).filter(Patient.patient_type == patient_type)
+                )
+            )
+
+        count_query = select(func.count()).select_from(query.subquery())
+        total = await db.execute(count_query)
+        total_count = total.scalar_one()
+
+        query = query.order_by(FollowUpQueue.deadline.asc())
+        query = query.offset(skip).limit(limit)
+
+        result = await db.execute(query)
+        queues = list(result.scalars().all())
+
+        items = []
+        for queue in queues:
+            patient = await db.get(Patient, queue.patient_id)
+            hospital = await db.get(Hospital, queue.hospital_id)
+            staff = await db.get(FollowUpStaff, queue.assigned_staff_id) if queue.assigned_staff_id else None
+            task = await db.get(AssessmentTask, queue.task_id) if queue.task_id else None
+
+            overdue_hours = 0.0
+            if queue.deadline:
+                overdue_hours = (now - queue.deadline).total_seconds() / 3600
+
+            items.append({
+                "queue_id": queue.id,
+                "queue_no": queue.queue_no,
+                "task_id": queue.task_id,
+                "task_no": task.task_no if task else "",
+                "patient_id": queue.patient_id,
+                "patient_name": patient.name if patient else "",
+                "patient_type": patient.patient_type.value if patient else "",
+                "hospital_id": queue.hospital_id,
+                "hospital_name": hospital.name if hospital else "",
+                "assigned_staff_id": queue.assigned_staff_id,
+                "assigned_staff_name": staff.name if staff else "",
+                "follow_up_round": queue.follow_up_round,
+                "scheduled_time": queue.scheduled_time,
+                "deadline": queue.deadline,
+                "status": queue.status.value if hasattr(queue.status, 'value') else str(queue.status),
+                "attempt_count": queue.attempt_count,
+                "overdue_hours": round(overdue_hours, 1)
+            })
+
+        return items, total_count
+
+    async def get_overdue_breakdown_by_hospital(
+        self,
+        db: AsyncSession
+    ) -> List[Dict[str, Any]]:
+        now = datetime.now()
+
+        query = select(
+            Hospital.id.label("hospital_id"),
+            Hospital.name.label("hospital_name"),
+            func.count(FollowUpQueue.id).label("total_count"),
+            func.sum(case((
+                and_(
+                    FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+                    FollowUpQueue.deadline < now
+                ), 1), else_=0
+            )).label("overdue_count")
+        ).select_from(Hospital).join(
+            FollowUpQueue, FollowUpQueue.hospital_id == Hospital.id, isouter=True
+        ).filter(
+            FollowUpQueue.is_active == True
+        ).group_by(Hospital.id, Hospital.name)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        breakdown = []
+        for row in rows:
+            total = row.total_count or 0
+            overdue = row.overdue_count or 0
+            rate = (overdue / total * 100) if total > 0 else 0.0
+            breakdown.append({
+                "dimension": "hospital",
+                "dimension_value": row.hospital_name,
+                "hospital_id": row.hospital_id,
+                "overdue_count": overdue,
+                "total_count": total,
+                "overdue_rate": round(rate, 2)
+            })
+
+        return breakdown
+
+    async def get_overdue_breakdown_by_patient_type(
+        self,
+        db: AsyncSession,
+        hospital_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        now = datetime.now()
+        from app.models import Patient
+
+        query = select(
+            Patient.patient_type,
+            func.count(FollowUpQueue.id).label("total_count"),
+            func.sum(case((
+                and_(
+                    FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+                    FollowUpQueue.deadline < now
+                ), 1), else_=0
+            )).label("overdue_count")
+        ).select_from(Patient).join(
+            FollowUpQueue, FollowUpQueue.patient_id == Patient.id, isouter=True
+        ).filter(
+            FollowUpQueue.is_active == True
+        )
+
+        if hospital_id:
+            query = query.filter(FollowUpQueue.hospital_id == hospital_id)
+
+        query = query.group_by(Patient.patient_type)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        breakdown = []
+        for row in rows:
+            total = row.total_count or 0
+            overdue = row.overdue_count or 0
+            rate = (overdue / total * 100) if total > 0 else 0.0
+            breakdown.append({
+                "dimension": "patient_type",
+                "dimension_value": row.patient_type.value if hasattr(row.patient_type, 'value') else str(row.patient_type),
+                "overdue_count": overdue,
+                "total_count": total,
+                "overdue_rate": round(rate, 2)
+            })
+
+        return breakdown
+
+    async def get_overdue_breakdown_by_staff(
+        self,
+        db: AsyncSession,
+        hospital_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        now = datetime.now()
+        from app.models import FollowUpStaff
+
+        query = select(
+            FollowUpStaff.id.label("staff_id"),
+            FollowUpStaff.name.label("staff_name"),
+            func.count(FollowUpQueue.id).label("total_count"),
+            func.sum(case((
+                and_(
+                    FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+                    FollowUpQueue.deadline < now
+                ), 1), else_=0
+            )).label("overdue_count")
+        ).select_from(FollowUpStaff).join(
+            FollowUpQueue, FollowUpQueue.assigned_staff_id == FollowUpStaff.id, isouter=True
+        ).filter(
+            FollowUpQueue.is_active == True
+        )
+
+        if hospital_id:
+            query = query.filter(FollowUpStaff.hospital_id == hospital_id)
+
+        query = query.group_by(FollowUpStaff.id, FollowUpStaff.name)
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        breakdown = []
+        for row in rows:
+            total = row.total_count or 0
+            overdue = row.overdue_count or 0
+            rate = (overdue / total * 100) if total > 0 else 0.0
+            breakdown.append({
+                "dimension": "staff",
+                "dimension_value": row.staff_name,
+                "staff_id": row.staff_id,
+                "overdue_count": overdue,
+                "total_count": total,
+                "overdue_rate": round(rate, 2)
+            })
+
+        return breakdown

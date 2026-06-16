@@ -365,6 +365,164 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
 
         return list(items), total_count
 
+    async def get_pending_transmission_list(
+        self,
+        db: AsyncSession,
+        *,
+        hospital_id: Optional[int] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        transmission_status: Optional[str] = None,
+        include_failed: bool = True,
+        skip: int = 0,
+        limit: int = 50
+    ) -> tuple[List[PSQIResult], int]:
+        query = select(PSQIResult).filter(PSQIResult.is_transmitted == False)
+
+        if hospital_id:
+            query = query.filter(PSQIResult.hospital_id == hospital_id)
+
+        if start_date:
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            query = query.filter(PSQIResult.assessment_date >= start_datetime)
+
+        if end_date:
+            end_datetime = datetime.combine(end_date, datetime.max.time())
+            query = query.filter(PSQIResult.assessment_date <= end_datetime)
+
+        if transmission_status:
+            query = query.filter(PSQIResult.transmission_status == transmission_status)
+        elif not include_failed:
+            query = query.filter(
+                or_(
+                    PSQIResult.transmission_status.is_(None),
+                    PSQIResult.transmission_status == ""
+                )
+            )
+
+        count_query = select(func.count()).select_from(query.subquery())
+        total = await db.execute(count_query)
+        total_count = total.scalar_one()
+
+        query = query.order_by(PSQIResult.assessment_date.asc())
+        query = query.offset(skip).limit(limit)
+
+        result = await db.execute(query)
+        items = result.scalars().all()
+
+        return list(items), total_count
+
+    async def batch_transmit_with_details(
+        self,
+        db: AsyncSession,
+        *,
+        result_ids: Optional[List[int]] = None,
+        hospital_id: Optional[int] = None,
+        include_failed: bool = True
+    ) -> Dict[str, Any]:
+        import logging
+        logger = logging.getLogger(__name__)
+
+        now = datetime.now()
+        success_ids = []
+        failed_ids = []
+        skipped_ids = []
+        failed_details = []
+        skipped_details = []
+
+        if result_ids is None:
+            query = select(PSQIResult).filter(
+                PSQIResult.is_transmitted == False
+            )
+            if hospital_id:
+                query = query.filter(PSQIResult.hospital_id == hospital_id)
+            if not include_failed:
+                query = query.filter(
+                    or_(
+                        PSQIResult.transmission_status.is_(None),
+                        PSQIResult.transmission_status == ""
+                    )
+                )
+
+            result = await db.execute(query)
+            pending_results = list(result.scalars().all())
+
+            if not pending_results:
+                logger.info("没有找到待回传的PSQI结果")
+                return {
+                    "total": 0,
+                    "success_count": 0,
+                    "failed_count": 0,
+                    "skipped_count": 0,
+                    "success_ids": [],
+                    "failed_ids": [],
+                    "skipped_ids": [],
+                    "failed_details": [],
+                    "skipped_details": []
+                }
+
+            result_ids = [r.id for r in pending_results]
+            logger.info(f"自动找到 {len(result_ids)} 条待回传结果")
+
+        if not result_ids:
+            return {
+                "total": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "success_ids": [],
+                "failed_ids": [],
+                "skipped_ids": [],
+                "failed_details": [],
+                "skipped_details": []
+            }
+
+        for result_id in result_ids:
+            try:
+                db_result = await self.get(db, result_id)
+                if not db_result:
+                    skipped_ids.append(result_id)
+                    skipped_details.append({"id": result_id, "reason": "结果不存在"})
+                    continue
+
+                if db_result.is_transmitted:
+                    skipped_ids.append(result_id)
+                    skipped_details.append({"id": result_id, "reason": "已回传，跳过"})
+                    continue
+
+                db_result.is_transmitted = True
+                db_result.transmitted_time = now
+                db_result.transmission_status = "success"
+                db_result.transmission_error = None
+
+                await db.flush()
+                success_ids.append(result_id)
+                logger.info(f"结果 {result_id} 回传成功")
+
+            except Exception as e:
+                failed_ids.append(result_id)
+                failed_details.append({"id": result_id, "reason": str(e)})
+                logger.error(f"结果 {result_id} 回传失败: {e}")
+
+        total = len(result_ids)
+        success_count = len(success_ids)
+        failed_count = len(failed_ids)
+        skipped_count = len(skipped_ids)
+
+        logger.info(f"批量回传完成: 总数{total}, 成功{success_count}, 失败{failed_count}, 跳过{skipped_count}")
+
+        return {
+            "total": total,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "success_ids": success_ids,
+            "failed_ids": failed_ids,
+            "skipped_ids": skipped_ids,
+            "failed_details": failed_details,
+            "skipped_details": skipped_details
+        }
+
     async def batch_transmit(
         self,
         db: AsyncSession,
@@ -439,6 +597,43 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
 
         result_ids = [r.id for r in failed_results]
         return await self.batch_transmit(db, result_ids=result_ids)
+
+    async def batch_retry_failed(
+        self,
+        db: AsyncSession,
+        *,
+        hospital_id: Optional[int] = None,
+        result_ids: Optional[List[int]] = None
+    ) -> Dict[str, Any]:
+        query = select(PSQIResult).filter(
+            PSQIResult.is_transmitted == False,
+            PSQIResult.transmission_status == "failed"
+        )
+
+        if hospital_id:
+            query = query.filter(PSQIResult.hospital_id == hospital_id)
+
+        if result_ids:
+            query = query.filter(PSQIResult.id.in_(result_ids))
+
+        result = await db.execute(query)
+        failed_results = list(result.scalars().all())
+
+        if not failed_results:
+            return {
+                "total": 0,
+                "success_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "success_ids": [],
+                "failed_ids": [],
+                "skipped_ids": [],
+                "failed_details": [],
+                "skipped_details": []
+            }
+
+        retry_ids = [r.id for r in failed_results]
+        return await self.batch_transmit_with_details(db, result_ids=retry_ids)
 
     async def get_patient_latest_result(
         self,

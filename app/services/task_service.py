@@ -214,13 +214,21 @@ class TaskService(BaseService[AssessmentTask, AssessmentTaskCreate, AssessmentTa
         return list(items), total_count
 
     async def get_overdue_tasks(self, db: AsyncSession) -> List[AssessmentTask]:
+        from app.models import FollowUpQueue
+        from app.models.enums import QueueStatus
+
         now = datetime.now()
+        overdue_task_ids_query = select(FollowUpQueue.task_id).filter(
+            FollowUpQueue.is_active == True,
+            FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+            FollowUpQueue.deadline < now
+        ).distinct()
+
         result = await db.execute(
             select(AssessmentTask)
             .filter(
                 AssessmentTask.is_active == True,
-                AssessmentTask.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED]),
-                AssessmentTask.deadline < now
+                AssessmentTask.id.in_(overdue_task_ids_query)
             )
             .order_by(AssessmentTask.deadline.asc())
         )

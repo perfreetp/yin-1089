@@ -6,9 +6,11 @@ from datetime import date
 from app.database import get_db
 from app.schemas import (
     HospitalStatsResponse, StaffPerformanceResponse, ScoreTrendResponse,
-    SuccessResponse, PaginationResponse, PatientResponse
+    SuccessResponse, PaginationResponse, PatientResponse,
+    OverdueDetailsResponse, OverdueBreakdownResponse
 )
 from app.schemas.stats import ExecutiveDashboardResponse
+from app.models.enums import PatientType
 from app.services.stats_service import StatsService
 
 router = APIRouter()
@@ -129,3 +131,64 @@ async def retry_failed_tasks(
 ):
     count = await stats_service.retry_failed_tasks(db, hospital_id=hospital_id)
     return SuccessResponse(data={"retried_count": count}, message=f"成功重试 {count} 条失败任务")
+
+
+@router.get("/overdue/queues", response_model=SuccessResponse[PaginationResponse])
+async def get_overdue_queues(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    hospital_id: Optional[int] = None,
+    patient_type: Optional[PatientType] = None,
+    staff_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    skip = (page - 1) * page_size
+    items, total = await stats_service.get_overdue_queues(
+        db,
+        hospital_id=hospital_id,
+        patient_type=patient_type,
+        staff_id=staff_id,
+        skip=skip,
+        limit=page_size
+    )
+
+    total_pages = (total + page_size - 1) // page_size
+    return SuccessResponse(
+        data=PaginationResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    )
+
+
+@router.get("/overdue/breakdown/hospital", response_model=SuccessResponse[list])
+async def get_overdue_breakdown_by_hospital(
+    db: AsyncSession = Depends(get_db)
+):
+    breakdown = await stats_service.get_overdue_breakdown_by_hospital(db)
+    return SuccessResponse(data=breakdown)
+
+
+@router.get("/overdue/breakdown/patient-type", response_model=SuccessResponse[list])
+async def get_overdue_breakdown_by_patient_type(
+    hospital_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    breakdown = await stats_service.get_overdue_breakdown_by_patient_type(
+        db, hospital_id=hospital_id
+    )
+    return SuccessResponse(data=breakdown)
+
+
+@router.get("/overdue/breakdown/staff", response_model=SuccessResponse[list])
+async def get_overdue_breakdown_by_staff(
+    hospital_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    breakdown = await stats_service.get_overdue_breakdown_by_staff(
+        db, hospital_id=hospital_id
+    )
+    return SuccessResponse(data=breakdown)

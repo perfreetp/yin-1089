@@ -8,8 +8,9 @@ from app.models.enums import PatientType, ContactResult
 from app.schemas import (
     FollowUpRuleCreate, FollowUpRuleUpdate, FollowUpRuleResponse,
     ContactIntervalRuleCreate, ContactIntervalRuleUpdate, ContactIntervalRuleResponse,
-    SuccessResponse, PaginationResponse
+    SuccessResponse, PaginationResponse, RuleTrialResponse
 )
+from datetime import datetime
 from app.services.rule_engine_service import RuleEngineService, ContactIntervalRuleService
 
 router = APIRouter()
@@ -200,3 +201,23 @@ async def calculate_follow_up_frequency(
         clinical_priority=clinical_priority
     )
     return SuccessResponse(data=frequency)
+
+
+@router.get("/trial", response_model=SuccessResponse[RuleTrialResponse])
+async def trial_rule(
+    patient_type: PatientType,
+    is_retest: bool = False,
+    hospital_id: Optional[int] = None,
+    last_contact_result: Optional[ContactResult] = None,
+    last_contact_time: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await rule_service.trial_calculate(
+        db,
+        patient_type=patient_type,
+        is_retest=is_retest,
+        hospital_id=hospital_id,
+        last_contact_result=last_contact_result,
+        last_contact_time=last_contact_time
+    )
+    return SuccessResponse(data=result, message="规则试算完成")

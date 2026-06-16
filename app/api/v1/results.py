@@ -7,7 +7,7 @@ from app.database import get_db
 from app.schemas import (
     PSQIResultCreate, PSQIResultUpdate, PSQIResultResponse,
     ScoreHistoryResponse, ResultFeedbackCreate, ResultFeedbackResponse,
-    SuccessResponse, PaginationResponse
+    SuccessResponse, PaginationResponse, BatchTransmitResponse
 )
 from app.services.result_service import ResultService
 
@@ -84,55 +84,39 @@ async def get_untransmitted_results(
     )
 
 
-@router.get("/{result_id}", response_model=SuccessResponse[PSQIResultResponse])
-async def get_result(result_id: int, db: AsyncSession = Depends(get_db)):
-    result = await result_service.get(db, result_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="结果不存在")
-    return SuccessResponse(data=result)
-
-
-@router.post("", response_model=SuccessResponse[PSQIResultResponse])
-async def create_result(result_in: PSQIResultCreate, db: AsyncSession = Depends(get_db)):
-    result = await result_service.create_result(db, obj_in=result_in)
-    return SuccessResponse(data=result, message="PSQI结果创建成功")
-
-
-@router.put("/{result_id}", response_model=SuccessResponse[PSQIResultResponse])
-async def update_result(
-    result_id: int,
-    result_in: PSQIResultUpdate,
-    db: AsyncSession = Depends(get_db)
-):
-    result = await result_service.get(db, result_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="结果不存在")
-
-    updated = await result_service.update(db, db_obj=result, obj_in=result_in)
-    return SuccessResponse(data=updated, message="结果更新成功")
-
-
-@router.post("/{result_id}/transmit", response_model=SuccessResponse[PSQIResultResponse])
-async def transmit_result(result_id: int, db: AsyncSession = Depends(get_db)):
-    result = await result_service.transmit_to_clinic(db, result_id=result_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="结果不存在")
-    return SuccessResponse(data=result, message="结果已回传门诊")
-
-
-@router.post("/batch-transmit", response_model=SuccessResponse)
-async def batch_transmit_results(result_ids: List[int], db: AsyncSession = Depends(get_db)):
-    count = await result_service.batch_transmit(db, result_ids=result_ids)
-    return SuccessResponse(data={"transmitted_count": count}, message=f"成功批量回传 {count} 条结果")
-
-
-@router.post("/retry-failed", response_model=SuccessResponse)
-async def retry_failed_transmissions(
+@router.get("/pending/list", response_model=SuccessResponse[PaginationResponse[PSQIResultResponse]])
+async def get_pending_transmission_list(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     hospital_id: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    transmission_status: Optional[str] = None,
+    include_failed: bool = True,
     db: AsyncSession = Depends(get_db)
 ):
-    count = await result_service.retry_failed_transmissions(db, hospital_id=hospital_id)
-    return SuccessResponse(data={"retried_count": count}, message=f"成功重试 {count} 条失败回传")
+    skip = (page - 1) * page_size
+    items, total = await result_service.get_pending_transmission_list(
+        db,
+        hospital_id=hospital_id,
+        start_date=start_date,
+        end_date=end_date,
+        transmission_status=transmission_status,
+        include_failed=include_failed,
+        skip=skip,
+        limit=page_size
+    )
+
+    total_pages = (total + page_size - 1) // page_size
+    return SuccessResponse(
+        data=PaginationResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+    )
 
 
 @router.get("/patient/{patient_id}/history", response_model=SuccessResponse[list[ScoreHistoryResponse]])
@@ -161,14 +145,12 @@ async def get_patient_latest_result(patient_id: int, db: AsyncSession = Depends(
     return SuccessResponse(data=result)
 
 
-@router.post("/feedback", response_model=SuccessResponse[ResultFeedbackResponse])
-async def create_feedback(feedback_in: ResultFeedbackCreate, db: AsyncSession = Depends(get_db)):
-    result = await result_service.get(db, feedback_in.result_id)
+@router.get("/{result_id}", response_model=SuccessResponse[PSQIResultResponse])
+async def get_result(result_id: int, db: AsyncSession = Depends(get_db)):
+    result = await result_service.get(db, result_id)
     if not result:
         raise HTTPException(status_code=404, detail="结果不存在")
-
-    feedback = await result_service.create_feedback(db, obj_in=feedback_in)
-    return SuccessResponse(data=feedback, message="结果反馈创建成功")
+    return SuccessResponse(data=result)
 
 
 @router.get("/{result_id}/feedbacks", response_model=SuccessResponse[list[ResultFeedbackResponse]])
@@ -179,6 +161,69 @@ async def get_result_feedbacks(result_id: int, db: AsyncSession = Depends(get_db
 
     feedbacks = await result_service.get_result_feedbacks(db, result_id=result_id)
     return SuccessResponse(data=feedbacks)
+
+
+@router.post("", response_model=SuccessResponse[PSQIResultResponse])
+async def create_result(result_in: PSQIResultCreate, db: AsyncSession = Depends(get_db)):
+    result = await result_service.create_result(db, obj_in=result_in)
+    return SuccessResponse(data=result, message="PSQI结果创建成功")
+
+
+@router.post("/batch-transmit", response_model=SuccessResponse)
+async def batch_transmit_results(
+    result_ids: Optional[List[int]] = None,
+    hospital_id: Optional[int] = None,
+    include_failed: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    count = await result_service.batch_transmit(
+        db, result_ids=result_ids, include_failed=include_failed
+    )
+    return SuccessResponse(data={"transmitted_count": count}, message=f"成功批量回传 {count} 条结果")
+
+
+@router.post("/batch-transmit/detailed", response_model=SuccessResponse[BatchTransmitResponse])
+async def batch_transmit_with_details(
+    result_ids: Optional[List[int]] = None,
+    hospital_id: Optional[int] = None,
+    include_failed: bool = True,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await result_service.batch_transmit_with_details(
+        db, result_ids=result_ids, hospital_id=hospital_id, include_failed=include_failed
+    )
+    return SuccessResponse(data=result, message="批量回传完成")
+
+
+@router.post("/retry-failed", response_model=SuccessResponse)
+async def retry_failed_transmissions(
+    hospital_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    count = await result_service.retry_failed_transmissions(db, hospital_id=hospital_id)
+    return SuccessResponse(data={"retried_count": count}, message=f"成功重试 {count} 条失败回传")
+
+
+@router.post("/batch-retry/detailed", response_model=SuccessResponse[BatchTransmitResponse])
+async def batch_retry_failed_detailed(
+    hospital_id: Optional[int] = None,
+    result_ids: Optional[List[int]] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await result_service.batch_retry_failed(
+        db, hospital_id=hospital_id, result_ids=result_ids
+    )
+    return SuccessResponse(data=result, message="批量重试完成")
+
+
+@router.post("/feedback", response_model=SuccessResponse[ResultFeedbackResponse])
+async def create_feedback(feedback_in: ResultFeedbackCreate, db: AsyncSession = Depends(get_db)):
+    result = await result_service.get(db, feedback_in.result_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="结果不存在")
+
+    feedback = await result_service.create_feedback(db, obj_in=feedback_in)
+    return SuccessResponse(data=feedback, message="结果反馈创建成功")
 
 
 @router.post("/feedback/{feedback_id}/read", response_model=SuccessResponse[ResultFeedbackResponse])
@@ -192,3 +237,25 @@ async def mark_feedback_read(
     if not feedback:
         raise HTTPException(status_code=404, detail="反馈不存在")
     return SuccessResponse(data=feedback, message="反馈已标记为已读")
+
+
+@router.put("/{result_id}", response_model=SuccessResponse[PSQIResultResponse])
+async def update_result(
+    result_id: int,
+    result_in: PSQIResultUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await result_service.get(db, result_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="结果不存在")
+
+    updated = await result_service.update(db, db_obj=result, obj_in=result_in)
+    return SuccessResponse(data=updated, message="结果更新成功")
+
+
+@router.post("/{result_id}/transmit", response_model=SuccessResponse[PSQIResultResponse])
+async def transmit_result(result_id: int, db: AsyncSession = Depends(get_db)):
+    result = await result_service.transmit_to_clinic(db, result_id=result_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="结果不存在")
+    return SuccessResponse(data=result, message="结果已回传门诊")
