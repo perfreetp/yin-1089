@@ -139,13 +139,13 @@ async def reassign_task(
     return SuccessResponse(data=task, message="任务已重新分派")
 
 
-@router.get("/patient/{patient_id}", response_model=SuccessResponse[list[AssessmentTaskResponse]])
-async def get_patient_tasks(patient_id: int, db: AsyncSession = Depends(get_db)):
-    tasks = await task_service.get_by_patient(db, patient_id=patient_id)
-    return SuccessResponse(data=tasks)
-
-
 @router.get("/overdue", response_model=SuccessResponse[list[AssessmentTaskResponse]])
 async def get_overdue_tasks(db: AsyncSession = Depends(get_db)):
     tasks = await task_service.get_overdue_tasks(db)
+    return SuccessResponse(data=tasks)
+
+
+@router.get("/patient/{patient_id}", response_model=SuccessResponse[list[AssessmentTaskResponse]])
+async def get_patient_tasks(patient_id: int, db: AsyncSession = Depends(get_db)):
+    tasks = await task_service.get_by_patient(db, patient_id=patient_id)
     return SuccessResponse(data=tasks)

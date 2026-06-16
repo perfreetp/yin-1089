@@ -151,8 +151,14 @@ class QueueService(BaseService[FollowUpQueue, FollowUpQueueCreate, FollowUpQueue
         self,
         db: AsyncSession,
         *,
-        contact_data: ContactRecordCreate
+        contact_data: ContactRecordCreate,
+        expected_queue_id: Optional[int] = None
     ) -> ContactRecord:
+        if expected_queue_id is not None and contact_data.queue_id != expected_queue_id:
+            raise ValueError(
+                f"队列ID不匹配: 请求体中的队列ID({contact_data.queue_id})与期望的队列ID({expected_queue_id})不一致"
+            )
+
         db_contact = ContactRecord(**contact_data.model_dump())
         db.add(db_contact)
         await db.flush()

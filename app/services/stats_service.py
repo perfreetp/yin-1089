@@ -36,13 +36,20 @@ class StatsService:
         start_datetime = datetime.combine(start_date, datetime.min.time())
         end_datetime = datetime.combine(end_date, datetime.max.time())
 
+        now = datetime.now()
+
         tasks_result = await db.execute(
             select(
                 func.count(AssessmentTask.id).label("total"),
                 func.sum(case((AssessmentTask.status == TaskStatus.PENDING, 1), else_=0)).label("pending"),
                 func.sum(case((AssessmentTask.status == TaskStatus.IN_PROGRESS, 1), else_=0)).label("in_progress"),
                 func.sum(case((AssessmentTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
-                func.sum(case((AssessmentTask.status == TaskStatus.OVERDUE, 1), else_=0)).label("overdue"),
+                func.sum(case((
+                    and_(
+                        AssessmentTask.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED]),
+                        AssessmentTask.deadline < now
+                    ), 1), else_=0
+                )).label("overdue"),
                 func.sum(case((AssessmentTask.status == TaskStatus.CANCELLED, 1), else_=0)).label("cancelled")
             ).filter(
                 AssessmentTask.hospital_id == hospital_id,
@@ -57,6 +64,12 @@ class StatsService:
             select(
                 func.count(FollowUpQueue.id).label("total"),
                 func.sum(case((FollowUpQueue.status == QueueStatus.COMPLETED, 1), else_=0)).label("completed"),
+                func.sum(case((
+                    and_(
+                        FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+                        FollowUpQueue.deadline < now
+                    ), 1), else_=0
+                )).label("overdue"),
                 func.avg(FollowUpQueue.attempt_count).label("avg_attempts")
             ).filter(
                 FollowUpQueue.hospital_id == hospital_id,
@@ -171,13 +184,19 @@ class StatsService:
 
         start_datetime = datetime.combine(start_date, datetime.min.time())
         end_datetime = datetime.combine(end_date, datetime.max.time())
+        now = datetime.now()
 
         queues_result = await db.execute(
             select(
                 func.count(FollowUpQueue.id).label("total"),
                 func.sum(case((FollowUpQueue.status == QueueStatus.COMPLETED, 1), else_=0)).label("completed"),
                 func.sum(case((FollowUpQueue.status == QueueStatus.IN_PROGRESS, 1), else_=0)).label("in_progress"),
-                func.sum(case((FollowUpQueue.status == QueueStatus.OVERDUE, 1), else_=0)).label("overdue")
+                func.sum(case((
+                    and_(
+                        FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED]),
+                        FollowUpQueue.deadline < now
+                    ), 1), else_=0
+                )).label("overdue")
             ).filter(
                 FollowUpQueue.assigned_staff_id == staff_id,
                 FollowUpQueue.created_at >= start_datetime,
@@ -355,6 +374,8 @@ class StatsService:
         self,
         db: AsyncSession
     ) -> ExecutiveDashboardResponse:
+        now = datetime.now()
+
         hospitals_result = await db.execute(
             select(
                 func.count(Hospital.id).label("total"),
@@ -404,7 +425,8 @@ class StatsService:
 
         overdue_result = await db.execute(
             select(func.count(AssessmentTask.id)).filter(
-                AssessmentTask.status == TaskStatus.OVERDUE,
+                AssessmentTask.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED]),
+                AssessmentTask.deadline < now,
                 AssessmentTask.is_active == True
             )
         )
@@ -414,7 +436,12 @@ class StatsService:
             select(
                 func.count(AssessmentTask.id).label("total"),
                 func.sum(case((AssessmentTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
-                func.sum(case((AssessmentTask.status == TaskStatus.OVERDUE, 1), else_=0)).label("overdue")
+                func.sum(case((
+                    and_(
+                        AssessmentTask.status.notin_([TaskStatus.COMPLETED, TaskStatus.CANCELLED]),
+                        AssessmentTask.deadline < now
+                    ), 1), else_=0
+                )).label("overdue")
             ).filter(AssessmentTask.is_active == True)
         )
         all_tasks = all_tasks_result.first()

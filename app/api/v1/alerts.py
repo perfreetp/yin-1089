@@ -89,18 +89,24 @@ async def get_unhandled_alerts(
     )
 
 
-@router.get("/{alert_id}", response_model=SuccessResponse[AlertResponse])
-async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
-    alert = await alert_service.get(db, alert_id)
-    if not alert:
-        raise HTTPException(status_code=404, detail="告警不存在")
-    return SuccessResponse(data=alert)
+@router.post("/run-checks", response_model=SuccessResponse)
+async def run_alert_checks(db: AsyncSession = Depends(get_db)):
+    result = await alert_service.run_alert_checks(db)
+    return SuccessResponse(data=result, message="告警检测完成")
 
 
 @router.post("", response_model=SuccessResponse[AlertResponse])
 async def create_alert(alert_in: AlertCreate, db: AsyncSession = Depends(get_db)):
     alert = await alert_service.create(db, obj_in=alert_in)
     return SuccessResponse(data=alert, message="告警创建成功")
+
+
+@router.get("/{alert_id}", response_model=SuccessResponse[AlertResponse])
+async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
+    alert = await alert_service.get(db, alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="告警不存在")
+    return SuccessResponse(data=alert)
 
 
 @router.put("/{alert_id}", response_model=SuccessResponse[AlertResponse])
@@ -171,9 +177,3 @@ async def get_alert_escalation_history(alert_id: int, db: AsyncSession = Depends
 
     history = await alert_service.get_alert_escalation_history(db, alert_id=alert_id)
     return SuccessResponse(data=history)
-
-
-@router.post("/run-checks", response_model=SuccessResponse)
-async def run_alert_checks(db: AsyncSession = Depends(get_db)):
-    result = await alert_service.run_alert_checks(db)
-    return SuccessResponse(data=result, message="告警检测完成")

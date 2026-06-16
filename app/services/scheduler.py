@@ -17,9 +17,11 @@ async def run_alert_checks():
     async with AsyncSessionLocal() as db:
         alert_service = AlertService()
         result = await alert_service.run_alert_checks(db)
+        await db.commit()
         logger.info(f"告警检测完成，创建告警: {result}")
 
     logger.info("告警检测任务执行完成")
+    return result
 
 
 async def generate_daily_queues():
@@ -30,8 +32,13 @@ async def generate_daily_queues():
     async with AsyncSessionLocal() as db:
         queue_service = QueueService()
         count = await queue_service.generate_daily_queues(db)
+        await db.commit()
 
-    logger.info(f"每日待办队列生成完成，共生成 {count} 个队列")
+    if count > 0:
+        logger.info(f"每日待办队列生成完成，共生成 {count} 个队列")
+    else:
+        logger.info("每日待办队列生成完成，没有需要生成的队列")
+    return count
 
 
 async def retry_failed_tasks():
@@ -42,8 +49,13 @@ async def retry_failed_tasks():
     async with AsyncSessionLocal() as db:
         stats_service = StatsService()
         retried = await stats_service.retry_failed_tasks(db)
+        await db.commit()
 
-    logger.info(f"失败任务重试完成，共重试 {retried} 个任务")
+    if retried > 0:
+        logger.info(f"失败任务重试完成，共重试 {retried} 个任务")
+    else:
+        logger.info("失败任务重试完成，没有需要重试的任务")
+    return retried
 
 
 async def batch_transmit_results():
@@ -54,8 +66,13 @@ async def batch_transmit_results():
     async with AsyncSessionLocal() as db:
         result_service = ResultService()
         transmitted = await result_service.batch_transmit(db)
+        await db.commit()
 
-    logger.info(f"结果批量回传完成，共回传 {transmitted} 个结果")
+    if transmitted > 0:
+        logger.info(f"结果批量回传完成，共成功回传 {transmitted} 个结果")
+    else:
+        logger.info("结果批量回传完成，没有待回传的结果")
+    return transmitted
 
 
 async def start_scheduler():

@@ -101,18 +101,24 @@ async def get_overdue_queues(
     return SuccessResponse(data=queues)
 
 
-@router.get("/{queue_id}", response_model=SuccessResponse[FollowUpQueueResponse])
-async def get_queue(queue_id: int, db: AsyncSession = Depends(get_db)):
-    queue = await queue_service.get(db, queue_id)
-    if not queue:
-        raise HTTPException(status_code=404, detail="队列不存在")
-    return SuccessResponse(data=queue)
+@router.post("/generate-daily", response_model=SuccessResponse)
+async def generate_daily_queues(db: AsyncSession = Depends(get_db)):
+    count = await queue_service.generate_daily_queues(db)
+    return SuccessResponse(data={"generated_count": count}, message=f"成功生成 {count} 条每日队列")
 
 
 @router.post("", response_model=SuccessResponse[FollowUpQueueResponse])
 async def create_queue(queue_in: FollowUpQueueCreate, db: AsyncSession = Depends(get_db)):
     queue = await queue_service.create(db, obj_in=queue_in)
     return SuccessResponse(data=queue, message="队列创建成功")
+
+
+@router.get("/{queue_id}", response_model=SuccessResponse[FollowUpQueueResponse])
+async def get_queue(queue_id: int, db: AsyncSession = Depends(get_db)):
+    queue = await queue_service.get(db, queue_id)
+    if not queue:
+        raise HTTPException(status_code=404, detail="队列不存在")
+    return SuccessResponse(data=queue)
 
 
 @router.put("/{queue_id}", response_model=SuccessResponse[FollowUpQueueResponse])
@@ -183,14 +189,21 @@ async def reassign_queue(
 
 @router.post("/{queue_id}/contact", response_model=SuccessResponse[ContactRecordResponse])
 async def record_contact(
+    queue_id: int,
     contact_data: ContactRecordCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    queue = await queue_service.get(db, contact_data.queue_id)
+    if contact_data.queue_id != queue_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"请求体中的队列ID({contact_data.queue_id})与URL中的队列ID({queue_id})不一致"
+        )
+
+    queue = await queue_service.get(db, queue_id)
     if not queue:
         raise HTTPException(status_code=404, detail="队列不存在")
 
-    contact = await queue_service.record_contact(db, contact_data=contact_data)
+    contact = await queue_service.record_contact(db, contact_data=contact_data, expected_queue_id=queue_id)
     return SuccessResponse(data=contact, message="联系结果已记录")
 
 
@@ -202,12 +215,6 @@ async def get_queue_contacts(queue_id: int, db: AsyncSession = Depends(get_db)):
 
     contacts = await queue_service.get_contact_history(db, queue_id=queue_id)
     return SuccessResponse(data=contacts)
-
-
-@router.post("/generate-daily", response_model=SuccessResponse)
-async def generate_daily_queues(db: AsyncSession = Depends(get_db)):
-    count = await queue_service.generate_daily_queues(db)
-    return SuccessResponse(data={"generated_count": count}, message=f"成功生成 {count} 条每日队列")
 
 
 @router.get("/patient/{patient_id}", response_model=SuccessResponse[list[ContactRecordResponse]])

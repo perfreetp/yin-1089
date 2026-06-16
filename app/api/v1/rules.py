@@ -52,14 +52,6 @@ async def get_follow_up_rules(
     )
 
 
-@router.get("/follow-up/{rule_id}", response_model=SuccessResponse[FollowUpRuleResponse])
-async def get_follow_up_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
-    rule = await rule_service.get(db, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="随访规则不存在")
-    return SuccessResponse(data=rule)
-
-
 @router.get("/follow-up/applicable", response_model=SuccessResponse[FollowUpRuleResponse])
 async def get_applicable_rule(
     patient_type: PatientType,
@@ -71,6 +63,14 @@ async def get_applicable_rule(
     )
     if not rule:
         raise HTTPException(status_code=404, detail="未找到适用的随访规则")
+    return SuccessResponse(data=rule)
+
+
+@router.get("/follow-up/{rule_id}", response_model=SuccessResponse[FollowUpRuleResponse])
+async def get_follow_up_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
+    rule = await rule_service.get(db, rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="随访规则不存在")
     return SuccessResponse(data=rule)
 
 
@@ -134,14 +134,6 @@ async def get_interval_rules(
     )
 
 
-@router.get("/interval/{rule_id}", response_model=SuccessResponse[ContactIntervalRuleResponse])
-async def get_interval_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
-    rule = await interval_rule_service.get(db, rule_id)
-    if not rule:
-        raise HTTPException(status_code=404, detail="联系间隔规则不存在")
-    return SuccessResponse(data=rule)
-
-
 @router.get("/interval/applicable", response_model=SuccessResponse[ContactIntervalRuleResponse])
 async def get_applicable_interval_rule(
     contact_result: Optional[ContactResult] = None,
@@ -153,6 +145,14 @@ async def get_applicable_interval_rule(
     )
     if not rule:
         raise HTTPException(status_code=404, detail="未找到适用的联系间隔规则")
+    return SuccessResponse(data=rule)
+
+
+@router.get("/interval/{rule_id}", response_model=SuccessResponse[ContactIntervalRuleResponse])
+async def get_interval_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
+    rule = await interval_rule_service.get(db, rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="联系间隔规则不存在")
     return SuccessResponse(data=rule)
 
 

@@ -369,20 +369,53 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
         self,
         db: AsyncSession,
         *,
-        result_ids: List[int]
+        result_ids: Optional[List[int]] = None,
+        include_failed: bool = True
     ) -> int:
+        import logging
+        logger = logging.getLogger(__name__)
+
         now = datetime.now()
+        processed_count = 0
+
+        if result_ids is None:
+            query = select(PSQIResult).filter(
+                PSQIResult.is_transmitted == False
+            )
+            if not include_failed:
+                query = query.filter(
+                    or_(
+                        PSQIResult.transmission_status.is_(None),
+                        PSQIResult.transmission_status == "failed"
+                    )
+                )
+
+            result = await db.execute(query)
+            pending_results = list(result.scalars().all())
+
+            if not pending_results:
+                logger.info("没有找到待回传的PSQI结果")
+                return 0
+
+            result_ids = [r.id for r in pending_results]
+            logger.info(f"自动找到 {len(result_ids)} 条待回传结果")
+
+        if not result_ids:
+            return 0
+
         await db.execute(
             update(PSQIResult)
-            .where(PSQIResult.id.in_(result_ids))
-            .values(
-                is_transmitted=True,
-                transmitted_time=now,
-                transmission_status="success"
+                .where(PSQIResult.id.in_(result_ids))
+                .values(
+                    is_transmitted=True,
+                    transmitted_time=now,
+                    transmission_status="success"
+                )
             )
-        )
         await db.flush()
-        return len(result_ids)
+        processed_count = len(result_ids)
+        logger.info(f"成功回传 {processed_count} 条PSQI结果")
+        return processed_count
 
     async def retry_failed_transmissions(
         self,
