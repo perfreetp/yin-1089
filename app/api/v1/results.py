@@ -92,6 +92,7 @@ async def get_pending_transmission_list(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     transmission_status: Optional[str] = None,
+    failure_reason: Optional[str] = None,
     include_failed: bool = True,
     db: AsyncSession = Depends(get_db)
 ):
@@ -102,6 +103,7 @@ async def get_pending_transmission_list(
         start_date=start_date,
         end_date=end_date,
         transmission_status=transmission_status,
+        failure_reason=failure_reason,
         include_failed=include_failed,
         skip=skip,
         limit=page_size
@@ -186,11 +188,12 @@ async def batch_transmit_results(
 async def batch_transmit_with_details(
     result_ids: Optional[List[int]] = None,
     hospital_id: Optional[int] = None,
+    failure_reason: Optional[str] = None,
     include_failed: bool = True,
     db: AsyncSession = Depends(get_db)
 ):
     result = await result_service.batch_transmit_with_details(
-        db, result_ids=result_ids, hospital_id=hospital_id, include_failed=include_failed
+        db, result_ids=result_ids, hospital_id=hospital_id, failure_reason=failure_reason, include_failed=include_failed
     )
     return SuccessResponse(data=result, message="批量回传完成")
 
@@ -207,11 +210,12 @@ async def retry_failed_transmissions(
 @router.post("/batch-retry/detailed", response_model=SuccessResponse[BatchTransmitResponse])
 async def batch_retry_failed_detailed(
     hospital_id: Optional[int] = None,
+    failure_reason: Optional[str] = None,
     result_ids: Optional[List[int]] = None,
     db: AsyncSession = Depends(get_db)
 ):
     result = await result_service.batch_retry_failed(
-        db, hospital_id=hospital_id, result_ids=result_ids
+        db, hospital_id=hospital_id, failure_reason=failure_reason, result_ids=result_ids
     )
     return SuccessResponse(data=result, message="批量重试完成")
 

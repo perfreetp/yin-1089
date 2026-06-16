@@ -182,6 +182,21 @@ class OverdueBreakdownResponse(BaseModel):
     overdue_rate: float = 0.0
 
 
+class OverdueTrendItem(BaseModel):
+    date: str
+    overdue_count: int = 0
+    overdue_queue_count: int = 0
+    new_overdue_count: int = 0
+
+
+class OverdueTrendResponse(BaseModel):
+    dimension: str = "date"
+    granularity: str = "day"
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    items: List[OverdueTrendItem] = []
+
+
 class OverdueDetailsResponse(BaseModel):
     total: int = 0
     items: List[OverdueQueueDetail] = []

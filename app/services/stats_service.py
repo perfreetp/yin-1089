@@ -826,3 +826,93 @@ class StatsService:
             })
 
         return breakdown
+
+    async def get_overdue_trend(
+        self,
+        db: AsyncSession,
+        *,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        granularity: str = "day",
+        hospital_id: Optional[int] = None,
+        patient_type: Optional[PatientType] = None,
+        staff_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        from app.models import Patient
+
+        if not end_date:
+            end_date = date.today()
+        if not start_date:
+            start_date = end_date - timedelta(days=30)
+
+        start_datetime = datetime.combine(start_date, datetime.min.time())
+        end_datetime = datetime.combine(end_date, datetime.max.time())
+
+        query = select(FollowUpQueue).filter(
+            FollowUpQueue.is_active == True,
+            FollowUpQueue.deadline >= start_datetime,
+            FollowUpQueue.deadline <= end_datetime,
+            FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED])
+        )
+
+        if hospital_id:
+            query = query.filter(FollowUpQueue.hospital_id == hospital_id)
+        if staff_id:
+            query = query.filter(FollowUpQueue.assigned_staff_id == staff_id)
+        if patient_type:
+            query = query.filter(
+                FollowUpQueue.patient_id.in_(
+                    select(Patient.id).filter(Patient.patient_type == patient_type)
+                )
+            )
+
+        result = await db.execute(query)
+        queues = list(result.scalars().all())
+
+        date_buckets = {}
+        current = start_date
+        while current <= end_date:
+            if granularity == "week":
+                week_start = current - timedelta(days=current.weekday())
+                key = week_start.strftime("%Y-%m-%d")
+            else:
+                key = current.strftime("%Y-%m-%d")
+            
+            if key not in date_buckets:
+                date_buckets[key] = {
+                    "date": key,
+                    "overdue_count": 0,
+                    "overdue_queue_count": 0,
+                    "new_overdue_count": 0
+                }
+            
+            if granularity == "week":
+                current += timedelta(days=7)
+            else:
+                current += timedelta(days=1)
+
+        task_ids_per_date = {}
+        for queue in queues:
+            if queue.deadline:
+                deadline_date = queue.deadline.date()
+                if granularity == "week":
+                    bucket_date = deadline_date - timedelta(days=deadline_date.weekday())
+                    key = bucket_date.strftime("%Y-%m-%d")
+                else:
+                    key = deadline_date.strftime("%Y-%m-%d")
+                
+                if key in date_buckets:
+                    date_buckets[key]["overdue_queue_count"] += 1
+                    date_buckets[key]["new_overdue_count"] += 1
+                    
+                    if key not in task_ids_per_date:
+                        task_ids_per_date[key] = set()
+                    task_ids_per_date[key].add(queue.task_id)
+
+        for key, task_ids in task_ids_per_date.items():
+            if key in date_buckets:
+                date_buckets[key]["overdue_count"] = len(task_ids)
+
+        items = sorted(date_buckets.values(), key=lambda x: x["date"])
+        
+        return items

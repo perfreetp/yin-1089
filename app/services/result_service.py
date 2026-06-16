@@ -373,6 +373,7 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         transmission_status: Optional[str] = None,
+        failure_reason: Optional[str] = None,
         include_failed: bool = True,
         skip: int = 0,
         limit: int = 50
@@ -400,6 +401,9 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
                 )
             )
 
+        if failure_reason:
+            query = query.filter(PSQIResult.transmission_error.like(f"%{failure_reason}%"))
+
         count_query = select(func.count()).select_from(query.subquery())
         total = await db.execute(count_query)
         total_count = total.scalar_one()
@@ -418,6 +422,7 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
         *,
         result_ids: Optional[List[int]] = None,
         hospital_id: Optional[int] = None,
+        failure_reason: Optional[str] = None,
         include_failed: bool = True
     ) -> Dict[str, Any]:
         import logging
@@ -443,6 +448,8 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
                         PSQIResult.transmission_status == ""
                     )
                 )
+            if failure_reason:
+                query = query.filter(PSQIResult.transmission_error.like(f"%{failure_reason}%"))
 
             result = await db.execute(query)
             pending_results = list(result.scalars().all())
@@ -603,6 +610,7 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
         db: AsyncSession,
         *,
         hospital_id: Optional[int] = None,
+        failure_reason: Optional[str] = None,
         result_ids: Optional[List[int]] = None
     ) -> Dict[str, Any]:
         query = select(PSQIResult).filter(
@@ -612,6 +620,9 @@ class ResultService(BaseService[PSQIResult, PSQIResultCreate, PSQIResultUpdate])
 
         if hospital_id:
             query = query.filter(PSQIResult.hospital_id == hospital_id)
+
+        if failure_reason:
+            query = query.filter(PSQIResult.transmission_error.like(f"%{failure_reason}%"))
 
         if result_ids:
             query = query.filter(PSQIResult.id.in_(result_ids))

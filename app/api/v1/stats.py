@@ -7,7 +7,8 @@ from app.database import get_db
 from app.schemas import (
     HospitalStatsResponse, StaffPerformanceResponse, ScoreTrendResponse,
     SuccessResponse, PaginationResponse, PatientResponse,
-    OverdueDetailsResponse, OverdueBreakdownResponse
+    OverdueDetailsResponse, OverdueBreakdownResponse,
+    OverdueTrendResponse
 )
 from app.schemas.stats import ExecutiveDashboardResponse
 from app.models.enums import PatientType
@@ -131,6 +132,36 @@ async def retry_failed_tasks(
 ):
     count = await stats_service.retry_failed_tasks(db, hospital_id=hospital_id)
     return SuccessResponse(data={"retried_count": count}, message=f"成功重试 {count} 条失败任务")
+
+
+@router.get("/overdue/trend", response_model=SuccessResponse[OverdueTrendResponse])
+async def get_overdue_trend(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    granularity: str = Query("day", pattern="^(day|week)$"),
+    hospital_id: Optional[int] = None,
+    patient_type: Optional[PatientType] = None,
+    staff_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    items = await stats_service.get_overdue_trend(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        granularity=granularity,
+        hospital_id=hospital_id,
+        patient_type=patient_type,
+        staff_id=staff_id
+    )
+
+    response = OverdueTrendResponse(
+        dimension="date",
+        granularity=granularity,
+        start_date=start_date,
+        end_date=end_date,
+        items=items
+    )
+    return SuccessResponse(data=response, message="超期趋势统计完成")
 
 
 @router.get("/overdue/queues", response_model=SuccessResponse[PaginationResponse])

@@ -56,12 +56,10 @@ async def get_tasks(
     )
 
 
-@router.get("/{task_id}", response_model=SuccessResponse[AssessmentTaskResponse])
-async def get_task(task_id: int, db: AsyncSession = Depends(get_db)):
-    task = await task_service.get(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return SuccessResponse(data=task)
+@router.get("/overdue", response_model=SuccessResponse[list[AssessmentTaskResponse]])
+async def get_overdue_tasks(db: AsyncSession = Depends(get_db)):
+    tasks = await task_service.get_overdue_tasks(db)
+    return SuccessResponse(data=tasks)
 
 
 @router.get("/no/{task_no}", response_model=SuccessResponse[AssessmentTaskResponse])
@@ -72,10 +70,24 @@ async def get_task_by_no(task_no: str, db: AsyncSession = Depends(get_db)):
     return SuccessResponse(data=task)
 
 
+@router.get("/patient/{patient_id}", response_model=SuccessResponse[list[AssessmentTaskResponse]])
+async def get_patient_tasks(patient_id: int, db: AsyncSession = Depends(get_db)):
+    tasks = await task_service.get_by_patient(db, patient_id=patient_id)
+    return SuccessResponse(data=tasks)
+
+
 @router.post("", response_model=SuccessResponse[AssessmentTaskResponse])
 async def create_task(task_in: AssessmentTaskCreate, db: AsyncSession = Depends(get_db)):
     task = await task_service.create_task(db, obj_in=task_in)
     return SuccessResponse(data=task, message="评估任务创建成功")
+
+
+@router.get("/{task_id}", response_model=SuccessResponse[AssessmentTaskResponse])
+async def get_task(task_id: int, db: AsyncSession = Depends(get_db)):
+    task = await task_service.get(db, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return SuccessResponse(data=task)
 
 
 @router.put("/{task_id}", response_model=SuccessResponse[AssessmentTaskResponse])
@@ -137,15 +149,3 @@ async def reassign_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return SuccessResponse(data=task, message="任务已重新分派")
-
-
-@router.get("/overdue", response_model=SuccessResponse[list[AssessmentTaskResponse]])
-async def get_overdue_tasks(db: AsyncSession = Depends(get_db)):
-    tasks = await task_service.get_overdue_tasks(db)
-    return SuccessResponse(data=tasks)
-
-
-@router.get("/patient/{patient_id}", response_model=SuccessResponse[list[AssessmentTaskResponse]])
-async def get_patient_tasks(patient_id: int, db: AsyncSession = Depends(get_db)):
-    tasks = await task_service.get_by_patient(db, patient_id=patient_id)
-    return SuccessResponse(data=tasks)
