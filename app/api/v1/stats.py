@@ -8,7 +8,7 @@ from app.schemas import (
     HospitalStatsResponse, StaffPerformanceResponse, ScoreTrendResponse,
     SuccessResponse, PaginationResponse, PatientResponse,
     OverdueDetailsResponse, OverdueBreakdownResponse,
-    OverdueTrendResponse
+    OverdueTrendResponse, OverdueQueueDetail
 )
 from app.schemas.stats import ExecutiveDashboardResponse
 from app.models.enums import PatientType
@@ -144,7 +144,7 @@ async def get_overdue_trend(
     staff_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    items = await stats_service.get_overdue_trend(
+    result = await stats_service.get_overdue_trend(
         db,
         start_date=start_date,
         end_date=end_date,
@@ -157,20 +157,22 @@ async def get_overdue_trend(
     response = OverdueTrendResponse(
         dimension="date",
         granularity=granularity,
-        start_date=start_date,
-        end_date=end_date,
-        items=items
+        start_date=result["start_date"],
+        end_date=result["end_date"],
+        items=result["items"]
     )
     return SuccessResponse(data=response, message="超期趋势统计完成")
 
 
-@router.get("/overdue/queues", response_model=SuccessResponse[PaginationResponse])
+@router.get("/overdue/queues", response_model=SuccessResponse[PaginationResponse[OverdueQueueDetail]])
 async def get_overdue_queues(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     hospital_id: Optional[int] = None,
     patient_type: Optional[PatientType] = None,
     staff_id: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     db: AsyncSession = Depends(get_db)
 ):
     skip = (page - 1) * page_size
@@ -179,6 +181,8 @@ async def get_overdue_queues(
         hospital_id=hospital_id,
         patient_type=patient_type,
         staff_id=staff_id,
+        start_date=start_date,
+        end_date=end_date,
         skip=skip,
         limit=page_size
     )

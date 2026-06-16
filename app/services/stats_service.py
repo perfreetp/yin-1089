@@ -626,6 +626,8 @@ class StatsService:
         hospital_id: Optional[int] = None,
         patient_type: Optional[PatientType] = None,
         staff_id: Optional[int] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
         skip: int = 0,
         limit: int = 50
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -648,6 +650,12 @@ class StatsService:
                     select(Patient.id).filter(Patient.patient_type == patient_type)
                 )
             )
+        if start_date:
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            query = query.filter(FollowUpQueue.deadline >= start_datetime)
+        if end_date:
+            end_datetime = datetime.combine(end_date, datetime.max.time())
+            query = query.filter(FollowUpQueue.deadline <= end_datetime)
 
         count_query = select(func.count()).select_from(query.subquery())
         total = await db.execute(count_query)
@@ -837,8 +845,10 @@ class StatsService:
         hospital_id: Optional[int] = None,
         patient_type: Optional[PatientType] = None,
         staff_id: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         from app.models import Patient
+
+        now = datetime.now()
 
         if not end_date:
             end_date = date.today()
@@ -846,12 +856,13 @@ class StatsService:
             start_date = end_date - timedelta(days=30)
 
         start_datetime = datetime.combine(start_date, datetime.min.time())
-        end_datetime = datetime.combine(end_date, datetime.max.time())
+        end_datetime = min(now, datetime.combine(end_date, datetime.max.time()))
 
         query = select(FollowUpQueue).filter(
             FollowUpQueue.is_active == True,
             FollowUpQueue.deadline >= start_datetime,
             FollowUpQueue.deadline <= end_datetime,
+            FollowUpQueue.deadline < now,
             FollowUpQueue.status.notin_([QueueStatus.COMPLETED, QueueStatus.CANCELLED])
         )
 
@@ -915,4 +926,8 @@ class StatsService:
 
         items = sorted(date_buckets.values(), key=lambda x: x["date"])
         
-        return items
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "items": items
+        }

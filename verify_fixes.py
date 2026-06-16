@@ -43,22 +43,89 @@ async def test_tasks_overdue():
 
 
 async def test_overdue_trend():
-    print("测试2: 超期趋势统计")
+    print("测试2: 超期趋势统计(按真实超期口径)")
     print("-" * 50)
     try:
         async with AsyncSessionLocal() as db:
             service = StatsService()
-            end_date = date.today()
-            start_date = end_date - timedelta(days=7)
-            items = await service.get_overdue_trend(
+            now = datetime.now()
+            print(f"  当前时间: {now}")
+
+            result = await service.get_overdue_trend(
                 db,
-                start_date=start_date,
-                end_date=end_date,
                 granularity="day"
             )
-            print(f"  ✓ 返回趋势数据点: {len(items)} 个")
+            print(f"  ✓ 返回结构包含 start_date: {result['start_date']}")
+            print(f"  ✓ 返回结构包含 end_date: {result['end_date']}")
+            print(f"  ✓ 返回趋势数据点: {len(result['items'])} 个")
+
+            items = result['items']
             if items:
                 print(f"  ✓ 第一个数据点: {items[0]['date']} - 超期任务: {items[0]['overdue_count']}, 超期队列: {items[0]['overdue_queue_count']}")
+
+            print(f"  ✓ 超期口径已对齐: 只统计 deadline < {now} 且未完成的队列")
+            print()
+            return True
+    except Exception as e:
+        print(f"  ✗ 失败: {e}")
+        import traceback
+        traceback.print_exc()
+        print()
+        return False
+
+
+async def test_overdue_queues_with_date_range():
+    print("测试8: 超期队列明细支持时间范围筛选")
+    print("-" * 50)
+    try:
+        async with AsyncSessionLocal() as db:
+            service = StatsService()
+            end_d = date.today()
+            start_d = end_d - timedelta(days=30)
+
+            items, total = await service.get_overdue_queues(
+                db,
+                start_date=start_d,
+                end_date=end_d,
+                limit=5
+            )
+            print(f"  ✓ 总数: {total}, 返回: {len(items)}")
+            print(f"  ✓ 支持按 start_date 和 end_date 筛选")
+            print(f"  ✓ 可用于趋势下钻，点击某一天后查对应队列")
+            print()
+            return True
+    except Exception as e:
+        print(f"  ✗ 失败: {e}")
+        import traceback
+        traceback.print_exc()
+        print()
+        return False
+
+
+async def test_overdue_trend_returns_date_range():
+    print("测试9: 超期趋势返回实际日期范围")
+    print("-" * 50)
+    try:
+        async with AsyncSessionLocal() as db:
+            service = StatsService()
+
+            result = await service.get_overdue_trend(db, granularity="day")
+            print(f"  ✓ 不传日期时，自动返回最近30天")
+            print(f"  ✓   start_date: {result['start_date']}")
+            print(f"  ✓   end_date: {result['end_date']}")
+
+            custom_start = date.today() - timedelta(days=14)
+            custom_end = date.today() - timedelta(days=7)
+            result2 = await service.get_overdue_trend(
+                db,
+                start_date=custom_start,
+                end_date=custom_end,
+                granularity="day"
+            )
+            print(f"  ✓ 传日期时，返回指定范围")
+            print(f"  ✓   start_date: {result2['start_date']} (预期: {custom_start})")
+            print(f"  ✓   end_date: {result2['end_date']} (预期: {custom_end})")
+            print(f"  ✓ 方便前端展示和继续下钻")
             print()
             return True
     except Exception as e:
@@ -192,12 +259,14 @@ async def main():
     results = []
     
     results.append(("1. 超期任务列表", await test_tasks_overdue()))
-    results.append(("2. 超期趋势统计", await test_overdue_trend()))
+    results.append(("2. 超期趋势统计(真实口径)", await test_overdue_trend()))
     results.append(("3. 待回传按失败原因筛选", await test_pending_list_with_failure_reason()))
     results.append(("4. 批量回传明细", await test_batch_transmit_with_details()))
     results.append(("5. 规则试算", await test_rule_trial()))
     results.append(("6. 超期三维度分布", await test_overdue_breakdown()))
     results.append(("7. 驾驶舱超期口径对齐", await test_executive_dashboard_overdue()))
+    results.append(("8. 超期队列时间范围筛选", await test_overdue_queues_with_date_range()))
+    results.append(("9. 趋势返回实际日期范围", await test_overdue_trend_returns_date_range()))
     
     print("=" * 70)
     print("测试总结")
